@@ -1,0 +1,61 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape Docker container logs
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Extract container name
+      - source_labels: [__meta_docker_container_name]
+        regex: '/(.*)'
+        target_label: container_name
+        replacement: '${1}'
+      
+      # Map container names to service names
+      - source_labels: [container_name]
+        regex: 'medisea-api'
+        target_label: service_name
+        replacement: 'medisea-service'
+      
+      - source_labels: [container_name]
+        regex: 'medisea-meili'
+        target_label: service_name
+        replacement: 'medisea-meili'
+      
+      - source_labels: [container_name]
+        regex: 'medisea-db'
+        target_label: service_name
+        replacement: 'medisea-db'
+      
+      - source_labels: [container_name]
+        regex: 'medisea-app'
+        target_label: service_name
+        replacement: 'medisea-app'
+      
+      # Set log path
+      - source_labels: [__meta_docker_container_id]
+        target_label: __path__
+        replacement: '/var/lib/docker/containers/${1}/${1}-json.log'
+    
+    pipeline_stages:
+      # Parse Docker JSON log format
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs: attrs
+      - labels:
+          stream:
+      - output:
+          source: output
+

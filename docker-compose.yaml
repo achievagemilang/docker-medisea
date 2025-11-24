@@ -1,0 +1,211 @@
+services:
+  loki:
+    command: -config.file=/etc/loki/local-config.yaml
+    container_name: localloki
+    ports:
+      - 3100:3100
+    image: grafana/loki:3.5.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # visualization tool
+  grafana:
+    container_name: localgrafana
+    depends_on:
+      - prometheus
+    image: grafana/grafana:12.2-ubuntu
+    ports:
+      - 3000:3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # monitoring system
+  prometheus:
+    container_name: localprometheus
+    image: quay.io/prometheus/prometheus:v2.53.5
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - 9090:9090
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # tracing system
+  jaeger:
+    container_name: localjaeger
+    image: jaegertracing/all-in-one:1.60
+    ports:
+      - 16686:16686
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # OpenTelemetry collector
+  otel-collector:
+    container_name: localotel
+    image: otel/opentelemetry-collector-contrib:0.136.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    user: "0:0"
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - otel_logs:/var/log/otel-collector # add this line
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Promtail for reading logs and sending to Loki
+  promtail:
+    container_name: localpromtail
+    image: grafana/promtail:3.5.5
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: medisea-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: medisea_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d medisea_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./medisea-be/db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "54320:5432"
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    container_name: medisea-meili
+    environment:
+      # Master key should match API_KEY in .env.production
+      # Must be at least 16 bytes for production
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-medisea-meili-master-key-2024-production}
+      - MEILI_ENV=production
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  meilisearch-setup:
+    image: alpine:latest
+    container_name: medisea-meili-setup
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+    environment:
+      - MEILI_HOST=http://meilisearch:7700
+      - MEILI_API_KEY=${MEILI_MASTER_KEY:-medisea-meili-master-key-2024-production}
+    volumes:
+      - ./medisea-be/script/setup_meili_docker.sh:/setup.sh:ro
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - |
+        apk add --no-cache bash curl
+        chmod +x /setup.sh
+        /setup.sh
+    restart: "no"
+
+  backend:
+    build:
+      context: ./medisea-be
+      dockerfile: Dockerfile
+    container_name: medisea-api
+    depends_on:
+      db:
+        condition: service_healthy
+      meilisearch:
+        condition: service_started
+    environment:
+      # Database URL - can be overridden by .env.production
+      DB_URL: postgres://postgres:postgres@db:5432/medisea_db
+      PORT: "8080"
+      SERVICE_NAME: "medisea-api"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # Meilisearch - can be overridden by .env.production
+      MEILI_HOST: http://meilisearch:7700
+      API_KEY: ${MEILI_MASTER_KEY:-medisea-meili-master-key-2024-production}
+    env_file:
+      - ./medisea-be/.env.production
+    expose:
+      - "8080" # reachable inside the compose network by "api:8080"
+    # (Optional) publish if you still want direct host access:
+    # ports:
+    #   - "8080:8080"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: ./medisea-fe
+      dockerfile: Dockerfile
+      args:
+        - VITE_BE_BASE_URL=
+        - VITE_OAUTH_GOOGLE_URL=${VITE_OAUTH_GOOGLE_URL:-/api/v1/auth/google/}
+    container_name: medisea-app
+    expose:
+      - "5173"
+
+  proxy:
+    image: nginx:latest
+    ports:
+      - 80:80
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-static:/usr/share/nginx/html:ro
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  db_data:
+  grafana_data: {}
+  prometheus_data: {}
+  meili_data:
+  otel_logs:

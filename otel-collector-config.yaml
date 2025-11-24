@@ -1,0 +1,135 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+  filelog/docker:
+    include:
+      - /var/lib/docker/containers/*/*-json.log
+    include_file_path: true
+    operators:
+      # Parse Docker's JSON log format (has 'log', 'stream', 'time' fields)
+      - type: json_parser
+        id: docker_json
+        timestamp:
+          parse_from: attributes.time
+          layout: '%Y-%m-%dT%H:%M:%S.%fZ'
+        output: extract_log_content
+      # Extract the actual log message from Docker's 'log' field
+      - type: move
+        id: extract_log_content
+        from: attributes.log
+        to: body
+        output: add_container_metadata
+      # Extract container ID from file path and add as label
+      - type: regex_parser
+        id: add_container_metadata
+        regex: '^.*containers/(?P<container_id>[a-f0-9]+)/.*\.log$'
+        parse_from: attributes["log.file.path"]
+        output: parse_application_log
+      # Try to parse application log as JSON (if it is JSON)
+      - type: router
+        id: parse_application_log
+        default: add_labels
+        routes:
+          - output: parse_json_log
+            expr: 'body matches "^\\s*\\{"'
+      # Parse JSON application logs
+      - type: json_parser
+        id: parse_json_log
+        parse_from: body
+        parse_to: attributes
+        output: add_labels
+      # Map container IDs to service names - match full or partial container ID in path
+      - type: router
+        id: add_labels
+        default: set_unknown_service
+        routes:
+          # Match any part of the container ID (full 64-char or 12-char prefix)
+          # medisea-api container ID: d1cf56410abe
+          - output: set_medisea_service
+            expr: 'attributes["log.file.path"] matches ".*d1cf56410abe.*" or attributes["container_id"] matches ".*d1cf56410abe.*"'
+          # medisea-meili container ID: 31322d3502f6
+          - output: set_medisea_meili
+            expr: 'attributes["log.file.path"] matches ".*31322d3502f6.*" or attributes["container_id"] matches ".*31322d3502f6.*"'
+          # medisea-db container ID: 4e0e00a1527e
+          - output: set_medisea_db
+            expr: 'attributes["log.file.path"] matches ".*4e0e00a1527e.*" or attributes["container_id"] matches ".*4e0e00a1527e.*"'
+          # medisea-app container ID: ff66ad8598c1
+          - output: set_medisea_app
+            expr: 'attributes["log.file.path"] matches ".*ff66ad8598c1.*" or attributes["container_id"] matches ".*ff66ad8598c1.*"'
+      # Set service names - use "medisea-service" for backend application logs
+      - type: add
+        id: set_medisea_service
+        field: attributes.service_name
+        value: 'medisea-service'
+      - type: add
+        id: set_medisea_meili
+        field: attributes.service_name
+        value: 'medisea-meili'
+      - type: add
+        id: set_medisea_db
+        field: attributes.service_name
+        value: 'medisea-db'
+      - type: add
+        id: set_medisea_app
+        field: attributes.service_name
+        value: 'medisea-app'
+      - type: add
+        id: set_otel_collector
+        field: attributes.service_name
+        value: 'otel-collector'
+      - type: add
+        id: set_unknown_service
+        field: attributes.service_name
+        value: 'unknown_service'
+
+processors:
+  batch: {}
+
+  # Add resource processor to set service_name from attributes
+  resource:
+    attributes:
+      - key: service.name
+        from_attribute: service_name
+        action: insert
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: otel
+
+  # Use file exporter to write logs, Promtail will read them
+  file/logs:
+    path: /var/log/otel-collector/logs.jsonl
+    format: json
+
+  # Add Jaeger exporter for traces
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: debug
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+
+    logs:
+      receivers: [otlp, filelog/docker]
+      processors: [batch, resource]
+      exporters: [file/logs]
+
+    # Add traces pipeline
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]
