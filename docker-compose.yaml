@@ -191,6 +191,7 @@ services:
       args:
         - VITE_BE_BASE_URL=
         - VITE_OAUTH_GOOGLE_URL=${VITE_OAUTH_GOOGLE_URL:-/api/v1/auth/google/}
+        - VITE_TEST_CARD_NUMBER=${VITE_TEST_CARD_NUMBER:-}
     container_name: medisea-app
     expose:
       - "5173"
