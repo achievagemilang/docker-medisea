@@ -8,8 +8,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
   # visualization tool
   grafana:
@@ -28,8 +28,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
   # monitoring system
   prometheus:
@@ -43,8 +43,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
   # tracing system
   jaeger:
@@ -57,15 +57,15 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
   # OpenTelemetry collector
   otel-collector:
     container_name: localotel
     image: otel/opentelemetry-collector-contrib:0.136.0
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    user: "0:0"
+    command: ['--config=/etc/otel-collector-config.yaml']
+    user: '0:0'
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -74,8 +74,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
   # Promtail for reading logs and sending to Loki
   promtail:
@@ -97,7 +97,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: medisea_db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d medisea_db"]
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d medisea_db']
       interval: 3s
       timeout: 3s
       retries: 10
@@ -105,7 +105,7 @@ services:
       - db_data:/var/lib/postgresql/data
       - ./medisea-be/db/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "54320:5432"
+      - '54320:5432'
 
   meilisearch:
     image: getmeili/meilisearch:v1.7
@@ -116,11 +116,11 @@ services:
       - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-medisea-meili-master-key-2024-production}
       - MEILI_ENV=production
     ports:
-      - "7700:7700"
+      - '7700:7700'
     volumes:
       - meili_data:/meili_data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:7700/health']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -128,8 +128,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
   meilisearch-setup:
     image: alpine:latest
@@ -142,14 +142,14 @@ services:
       - MEILI_API_KEY=${MEILI_MASTER_KEY:-medisea-meili-master-key-2024-production}
     volumes:
       - ./medisea-be/script/setup_meili_docker.sh:/setup.sh:ro
-    entrypoint: ["/bin/sh"]
+    entrypoint: ['/bin/sh']
     command:
       - -c
       - |
         apk add --no-cache bash curl
         chmod +x /setup.sh
         /setup.sh
-    restart: "no"
+    restart: 'no'
 
   backend:
     build:
@@ -164,8 +164,8 @@ services:
     environment:
       # Database URL - can be overridden by .env.production
       DB_URL: postgres://postgres:postgres@db:5432/medisea_db
-      PORT: "8080"
-      SERVICE_NAME: "medisea-api"
+      PORT: '8080'
+      SERVICE_NAME: 'medisea-api'
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       # Meilisearch - can be overridden by .env.production
       MEILI_HOST: http://meilisearch:7700
@@ -173,7 +173,7 @@ services:
     env_file:
       - ./medisea-be/.env.production
     expose:
-      - "8080" # reachable inside the compose network by "api:8080"
+      - '8080' # reachable inside the compose network by "api:8080"
     # (Optional) publish if you still want direct host access:
     # ports:
     #   - "8080:8080"
@@ -181,8 +181,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
   frontend:
     build:
@@ -190,11 +190,11 @@ services:
       dockerfile: Dockerfile
       args:
         - VITE_BE_BASE_URL=
-        - VITE_OAUTH_GOOGLE_URL=${VITE_OAUTH_GOOGLE_URL:-/api/v1/auth/google/}
+        - VITE_OAUTH_GOOGLE_URL=${VITE_OAUTH_GOOGLE_URL:-/vm1/api/auth/google}
         - VITE_TEST_CARD_NUMBER=${VITE_TEST_CARD_NUMBER:-}
     container_name: medisea-app
     expose:
-      - "5173"
+      - '5173'
 
   proxy:
     image: nginx:latest
