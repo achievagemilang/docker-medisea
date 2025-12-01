@@ -5,10 +5,10 @@ export const options = {
   scenarios: {
     constant_rps: {
       executor: 'constant-arrival-rate',
-      rate: 50, // target iterations per second (approx RPS)
+      rate: 50,
       timeUnit: '1s',
       duration: '45s',
-      preAllocatedVUs: 80, // pool size to sustain the RPS
+      preAllocatedVUs: 80,
       maxVUs: 120,
     },
   },
@@ -16,7 +16,7 @@ export const options = {
 
 export default function () {
   const loginRes = http.post(
-    'http://10.134.134.69/api/v1/auth/login',
+    'http://10.134.134.69/vm1/api/v1/auth/login',
     JSON.stringify({
       email: 'user@medisea.com',
       password: 'passpass',
@@ -29,7 +29,7 @@ export default function () {
   check(loginRes, { 'login successful': (r) => r.status === 200 });
 
   const token = loginRes.json('data')?.access_token;
-  const profileRes = http.get('http://10.134.134.69/api/v1/users/profile', {
+  const profileRes = http.get('http://10.134.134.69/vm1/api/v1/users/profile', {
     headers: { Authorization: `Bearer ${token}` },
   });
 
